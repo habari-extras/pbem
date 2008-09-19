@@ -48,7 +48,7 @@ class pbem extends Plugin
   }
 
   public static function check_accounts() {
-    $users= Users::get();
+    $users = Users::get();
     
     foreach ($users as $user) {
       $server_string = $user->info->pbem__server_string;
@@ -68,7 +68,7 @@ class pbem extends Plugin
             $body = trim($body);
           }
           
-          $postdata= array(
+          $postdata = array(
             'slug' => $header->subject,
             'title' => $header->subject,
             'content' => $body,
@@ -81,7 +81,7 @@ class pbem extends Plugin
           
           EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
 
-          $post= Post::create( $postdata );
+          $post = Post::create( $postdata );
           
           if ($post) {
             imap_delete( $mh, $i );
