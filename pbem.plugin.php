@@ -17,26 +17,29 @@ class pbem extends Plugin
 			'authorurl' => 'http://habariproject.org/',
 			'license' => 'Apache License 2.0',
 			'description' => 'Post by sending e-mail to a special mailbox or IMAP folder.',
-			'copyright' => '2008'
+			'copyright' => '2009'
 		);
 	}
 	
 	public function action_plugin_activation( $file )
 	{
 		if ( realpath( $file ) == __FILE__ ) {
-      CronTab::add_cron( array(
-        'name' => 'pbem_check_accounts',
-        'callback' => array( __CLASS__, 'check_accounts' ),
-        'increment' => 600,
-        'description' => 'Check for new PBEM mail every 600 seconds.',
-      ) );
+			CronTab::add_cron( array(
+				'name' => 'pbem_check_accounts',
+				'callback' => array( __CLASS__, 'check_accounts' ),
+				'increment' => 600,
+				'description' => 'Check for new PBEM mail every 600 seconds.',
+			) );
+ 			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
 		}
 	}
 
 	public function action_plugin_deactivation( $file )
 	{
 		if ( realpath( $file ) == __FILE__ ) {
-      CronTab::delete_cron( 'pbem_check_accounts' );
+			CronTab::delete_cronjob( 'pbem_check_accounts' );
+
+ 			ACL::destroy_token( 'PBEM' ); 
 		}
 	}
 
@@ -67,24 +70,32 @@ class pbem extends Plugin
             $tags = trim(substr($tags, 5));
             $body = trim($body);
           }
+
+Utils::debug( $body );
+// die;
           
           $postdata = array(
-            'slug' => $header->subject,
+//            'slug' => $header->subject,
             'title' => $header->subject,
             'content' => $body,
             'user_id' => $user->id,
-            'pubdate' => date( 'Y-m-d H:i:s', $header->udate ),
+            'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate )) ,
             'status' => Post::status('published'),
             'content_type' => Post::type('entry'),
-            'tags' => $tags,
-          );
+	);
+
+	if ( isset( $tags ) ) {
+		$postdata['tags'] = $tags;
+	}
+
+Utils::debug( $postdata ); 
           
           EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
 
           $post = Post::create( $postdata );
           
           if ($post) {
-            imap_delete( $mh, $i );
+//            imap_delete( $mh, $i );
           }
           else {
             EventLog::log( 'Failed to create a new post?' );
@@ -102,6 +113,13 @@ class pbem extends Plugin
 	{
 		if ( $plugin_id == $this->plugin_id() ) {
 			$actions[] = _t('Configure', 'pbem');
+			if ( User::identify()->can( 'PBEM' ) ) {
+				// only users with the proper permission
+				// should be able to retrieve the emails
+				$actions[]= _t( 'Execute Now' );
+			}
+
+
 		}
 		return $actions;
 	}
@@ -119,15 +137,34 @@ class pbem extends Plugin
 					$server_username = $ui->append( 'text', 'server_username', 'user:pbem__server_username', _t('Username: ', 'pbem') );
 					$server_username->add_validator( 'validate_required' );
 
-					$server_password = $ui->append( 'password', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
+/* make this a password */ 	$server_password = $ui->append( 'text', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
 					$server_password->add_validator( 'validate_required' );
 
 					$ui->append( 'submit', 'save', _t( 'Save', 'pbem' ) );
 					$ui->set_option( 'success_message', _t( 'Configuration saved', 'pbem' ) );
 					$ui->out();
 					break;
+				case _t('Execute Now','pbem') :
+					$this->check_accounts();
+					Utils::redirect( URL::get( 'admin', 'page=plugins' ) );
+					break;
 			}
 		}
+	}
+
+	/** 
+	 * filter the permissions so that admin users can use this plugin 
+ 	 **/ 
+	public function filter_admin_access_tokens( $require_any, $page, $type ) 
+		{ 
+		// we only need to filter if the Page request is for our page 
+		if ( 'pbem' == $page ) { 
+			// we can safely clobber any existing $require_any 
+			// passed because our page didn't match anything in 
+			// the adminhandler case statement 
+			$require_any= array( 'super_user' => true, 'pbem' => true ); 
+		} 
+		return $require_any; 
 	}
 
 }
