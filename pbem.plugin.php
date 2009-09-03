@@ -43,71 +43,64 @@ class pbem extends Plugin
 		}
 	}
 
-	/* Go to http://your-blog/admin/pbem to immediately check the mailbox and post new posts. */
-  function action_admin_theme_get_pbem( $handler, $theme )
+	/* Go to http://your-blog/admin/pbem to immediately check the mailbox and post new posts AND SEE ERRORS. */
+	function action_admin_theme_get_pbem( $handler, $theme )
 	{
 		self::check_accounts();
-    exit;
-  }
-
-  public static function check_accounts() {
-    $users = Users::get();
-    
-    foreach ($users as $user) {
-      $server_string = $user->info->pbem__server_string;
-      $server_username = $user->info->pbem__server_username;
-      $server_password = $user->info->pbem__server_password;
-      
-      if ($server_string) {
-        $mh = imap_open($server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG);
-        $n = imap_num_msg($mh);
-        for ($i = 1; $i <= $n; $i++) {
-          $body = imap_body($mh, $i);
-          $header = imap_header($mh, $i);
-          $tags = '';
-          if (stripos($body, 'tags:') === 0) {
-            list($tags, $body) = explode("\n", $body, 2);
-            $tags = trim(substr($tags, 5));
-            $body = trim($body);
-          }
-
-          $postdata = array(
-	    'slug' =>  $header->subject,
-            'title' => $header->subject,
-	'tags' => $tags,
-            'content' => $body,
-            'user_id' => $user->id,
-            'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
-            'status' => Post::status('published'),
-            'content_type' => Post::type('entry'),
-	);
-
-Utils::debug( ">" . $tags . "<" );
-/*
-	if ( $tags <> '' ) {
-		$postdata['tags'] = $tags;
-	} else { */
-// 		$postdata['tags'] = '';
-/*
+		exit;
 	}
-*/
-Utils::debug( $postdata ); 
-          
-          EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
 
-          $post = Post::create( $postdata );
-          
-          if ($post) {
-//            imap_delete( $mh, $i );
-          }
-          else {
-            EventLog::log( 'Failed to create a new post?' );
-          }
-        }
-        imap_expunge( $mh );
-        imap_close( $mh );
-      }
-    }
+	public static function check_accounts() 
+	{
+		$users = Users::get();
+
+		foreach ($users as $user) {
+			$server_string = $user->info->pbem__server_string;
+			$server_username = $user->info->pbem__server_username;
+			$server_password = $user->info->pbem__server_password;
+
+		if ($server_string) {
+			$mh = imap_open($server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG);
+			$n = imap_num_msg($mh);
+			for ($i = 1; $i <= $n; $i++) {
+				$body = imap_body($mh, $i);
+				$header = imap_header($mh, $i);
+				$tags = '';
+				if (stripos($body, 'tags:') === 0) {
+					list($tags, $body) = explode("\n", $body, 2);
+					$tags = trim(substr($tags, 5));
+					$body = trim($body);
+				}
+
+				$postdata = array(
+					'slug' =>$header->subject,
+					'title' => $header->subject,
+					'tags' => $tags,
+					'content' => $body,
+					'user_id' => $user->id,
+					'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
+					'status' => Post::status('published'),
+					'content_type' => Post::type('entry'),
+				);
+
+// Utils::debug( $postdata ); 
+				// This htmlspecialchars makes logs with &lt; &gt; etc. Is there a better way to sanitize?
+				EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
+
+				$post = Post::create( $postdata );
+
+				if ($post) {
+					// done with the message, now delete it. Comment out if you're testing.
+					imap_delete( $mh, $i );
+				}
+				else {
+					EventLog::log( 'Failed to create a new post?' );
+				}
+			}
+			imap_expunge( $mh );
+			imap_close( $mh );
+		}
+	}
 
 		return true;
 	}
@@ -140,7 +133,7 @@ Utils::debug( $postdata );
 					$server_username = $ui->append( 'text', 'server_username', 'user:pbem__server_username', _t('Username: ', 'pbem') );
 					$server_username->add_validator( 'validate_required' );
 
-/* make this a password */ 	$server_password = $ui->append( 'text', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
+					$server_password = $ui->append( 'password', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
 					$server_password->add_validator( 'validate_required' );
 
 					$ui->append( 'submit', 'save', _t( 'Save', 'pbem' ) );
