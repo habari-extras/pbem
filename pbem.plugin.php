@@ -71,23 +71,26 @@ class pbem extends Plugin
             $body = trim($body);
           }
 
-Utils::debug( $body );
-// die;
-          
           $postdata = array(
-//            'slug' => $header->subject,
+	    'slug' =>  $header->subject,
             'title' => $header->subject,
+	'tags' => $tags,
             'content' => $body,
             'user_id' => $user->id,
-            'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate )) ,
+            'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
             'status' => Post::status('published'),
             'content_type' => Post::type('entry'),
 	);
 
-	if ( isset( $tags ) ) {
+Utils::debug( ">" . $tags . "<" );
+/*
+	if ( $tags <> '' ) {
 		$postdata['tags'] = $tags;
+	} else { */
+// 		$postdata['tags'] = '';
+/*
 	}
-
+*/
 Utils::debug( $postdata ); 
           
           EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
