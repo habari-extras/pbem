@@ -7,20 +7,6 @@
  */
 class pbem extends Plugin
 {
-
-	public function info() {
-		return array(
-			'name' => 'PBEM',
-			'version' => '0.1.0',
-			'url' => 'http://habariproject.org/',
-			'author' =>	'Habari Community',
-			'authorurl' => 'http://habariproject.org/',
-			'license' => 'Apache License 2.0',
-			'description' => 'Post by sending e-mail to a special mailbox or IMAP folder.',
-			'copyright' => '2009'
-		);
-	}
-	
 	public function action_plugin_activation( $file )
 	{
 		if ( realpath( $file ) == __FILE__ ) {
