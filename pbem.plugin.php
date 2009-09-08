@@ -24,10 +24,10 @@ class pbem extends Plugin
 		}
 		$filename = "$pbemdir/$filename";
 // Utils::debug( $content );
-Utils::debug( $filename );
-			$dest = fopen( $filename, 'w+') or die( 'cannot open for writing') ;
-			fwrite( $dest, $content );
-			return fclose( $dest );
+// Utils::debug( $filename );
+		$dest = fopen( $filename, 'w+') or die( 'cannot open for writing') ;
+		fwrite( $dest, $content );
+		return fclose( $dest );
 	}
 
 	public function action_plugin_activation( $file )
@@ -40,6 +40,10 @@ Utils::debug( $filename );
 				'description' => 'Check for new PBEM mail every 600 seconds.',
 			) );
  			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
+
+			if ( !Options::get( 'user:pbem__class' ) ) {
+				Options::set( 'user:pbem__class', 'mobile' );
+			}
 		}
 	}
 
@@ -88,7 +92,6 @@ Utils::debug( $filename );
 						// there's room here for more stuff, with strtoupper($structure->subtype...)
 					}
 // Utils::debug( 'not multipart!' );
-
 				} 
 				else {
 					$attachments = array();
@@ -140,7 +143,7 @@ Utils::debug( $filename );
 									self::store_attachment( $imgfile, $attachments[$j]['attachment'] );
 
 									// Put the image at the beginning of the post
-									$img_src = Site::get_dir( 'user' ) . '/files/PBEM/$imgfile';
+									$img_src = Site::get_dir( 'user' ) . "/files/PBEM/$imgfile";
 									$content_image = '<img src="' . $img_src .'" class="' . Options::get( 'user:pbem__class' ) . '">\n';
 									$body = $content_image . $body;
 								}
