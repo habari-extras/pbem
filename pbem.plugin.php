@@ -72,128 +72,132 @@ class pbem extends Plugin
 			$server_username = $user->info->pbem__server_username;
 			$server_password = $user->info->pbem__server_password;
 
-		if ($server_string) {
-			$mh = imap_open( $server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG )
-				or Eventlog::log( _t( 'Unable to connect' ) ); // get a better error, one with imap_*
-			$n = imap_num_msg( $mh );
-			for ( $i = 1; $i <= $n; $i++ ) {
+			if ($server_string) {
+				$mh = imap_open( $server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG )
+					or Eventlog::log( _t( 'Unable to connect' ) ); // get a better error, one with imap_*
+				$n = imap_num_msg( $mh );
+				for ( $i = 1; $i <= $n; $i++ ) {
 
-				$body = '';
+					$body = '';
 
-				$header = imap_header( $mh, $i );
-				$structure = imap_fetchstructure( $mh, $i );
+					$header = imap_header( $mh, $i );
+					$structure = imap_fetchstructure( $mh, $i );
 
-				if ( !isset( $structure->parts )) {
-					// message is not not multipart
-					$body = imap_body( $mh, $i ); // fetchbody only works for single part messages.
-					if ( $structure->encoding == 4 ) {
-						$body = quoted_printable_decode( $body );
+					if ( !isset( $structure->parts )) {
+						// message is not not multipart
+						$body = imap_body( $mh, $i ); // fetchbody only works for single part messages.
+						if ( $structure->encoding == 4 ) {
+							$body = quoted_printable_decode( $body );
 
-						// there's room here for more stuff, with strtoupper($structure->subtype...)
-					}
+							// there's room here for more stuff, with strtoupper($structure->subtype...)
+						}
 // Utils::debug( 'not multipart!' );
-				} 
-				else {
-					$attachments = array();
-					if ( isset( $structure->parts ) && count( $structure->parts ) ) {
+					} 
+					else {
+						$attachments = array();
+						if ( isset( $structure->parts ) && count( $structure->parts ) ) {
 
-						for($j = 0; $j < count($structure->parts); $j++) {
+							for($j = 0; $j < count($structure->parts); $j++) {
 
-							$attachments[$j] = array(
-								'is_attachment' => false,
-								'filename' => '',
-								'subtype' => '',
-								'name' => '',
-								'attachment' => ''
-							);
+								$attachments[$j] = array(
+									'is_attachment' => false,
+									'filename' => '',
+									'subtype' => '',
+									'name' => '',
+									'attachment' => ''
+								);
 // Utils::debug($structure->parts[$j]->subtype); 		
 
-							if ( $structure->parts[$j]->ifdparameters ) {
-								foreach( $structure->parts[$j]->dparameters as $object ) {
-									if ( strtolower( $object->attribute ) == 'filename' ) {
-										$attachments[$j]['is_attachment'] = true;
-										$attachments[$j]['filename'] = $object->value;
-										$attachments[$j]['subtype'] = $structure->parts[$j]->subtype;
+								if ( $structure->parts[$j]->ifdparameters ) {
+									foreach( $structure->parts[$j]->dparameters as $object ) {
+										if ( strtolower( $object->attribute ) == 'filename' ) {
+											$attachments[$j]['is_attachment'] = true;
+											$attachments[$j]['filename'] = $object->value;
+											$attachments[$j]['subtype'] = $structure->parts[$j]->subtype;
+										}
 									}
 								}
-							}
-							elseif ( strtolower ($structure->parts[$j]->subtype)  == 'plain' ) {
-								$body .= imap_fetchbody( $mh, $i, $j+1 );			
+								elseif ( strtolower ($structure->parts[$j]->subtype)  == 'plain' ) {
+									$body .= imap_fetchbody( $mh, $i, $j+1 );			
 // Utils::debug( 'PLAIN!!!' );			
-							}
+								}
 
-							if ( $structure->parts[$j]->ifparameters ) {
-								foreach( $structure->parts[$j]->parameters as $object ) {
-									if( strtolower( $object->attribute ) == 'name') {
-										$attachments[$j]['is_attachment'] = true;
-										$attachments[$j]['name'] = $object->value;
-										if ( !isset( $attachments[$j]['subtype'] ) ) { // may not be necessary
-											$attachments[$j]['subtype'] = $structure->parts[$j]->subtype; // may not be necessary
-										} // may not be necessary
+								if ( $structure->parts[$j]->ifparameters ) {
+									foreach( $structure->parts[$j]->parameters as $object ) {
+										if( strtolower( $object->attribute ) == 'name') {
+											$attachments[$j]['is_attachment'] = true;
+											$attachments[$j]['name'] = $object->value;
+											if ( !isset( $attachments[$j]['subtype'] ) ) { // may not be necessary
+												$attachments[$j]['subtype'] = $structure->parts[$j]->subtype; // may not be necessary
+											} // may not be necessary
+										}
 									}
 								}
-							}
 
-							if( $attachments[$j]['is_attachment'] ) {
-								$attachments[$j]['attachment'] = imap_fetchbody($mh, $i, $j+1);
+								if( $attachments[$j]['is_attachment'] ) {
+									$attachments[$j]['attachment'] = imap_fetchbody($mh, $i, $j+1);
 
-								if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
-									$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-									$imgfile = $attachments[$j]['filename'];
-									self::store_attachment( $imgfile, $attachments[$j]['attachment'] );
-
-									// Put the image at the beginning of the post
-									$img_src = Site::get_dir( 'user' ) . "/files/PBEM/$imgfile";
-									$content_image = '<img src="' . $img_src .'" class="' . Options::get( 'user:pbem__class' ) . '">\n';
-									$body = $content_image . $body;
-								}
-								elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
-									$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
-									$body .= $attachments[$j]['attachment'];
+									if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
+										$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
+										self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+									}
+									elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
+										$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
+										$body .= $attachments[$j]['attachment'];
+									}
 								}
 							}
 						}
 					}
-				}
 
-				$tags = '';
+					$tags = '';
 
-				// if the first line of the message starts with 'tags:', read that line into tags.
-				if ( stripos($body, 'tags:' ) === 0) {
-					list($tags, $body) = explode("\n", $body, 2);
-					$tags = trim(substr($tags, 5));
-					$body = trim($body);
-				}
+					// if the first line of the message starts with 'tags:', read that line into tags.
+					if ( stripos($body, 'tags:' ) === 0) {
+						list($tags, $body) = explode("\n", $body, 2);
+						$tags = trim(substr($tags, 5));
+						$body = trim($body);
+					}
+
+					foreach( $attachments as $attachment ) {
+						if ( !empty( $attachment[ 'filename' ] ) ) {
+							$imgfile = $attachment['filename'];
+							// Put the image at the beginning of the post
+							$img_src = Site::get_url( 'user' ) . "/files/PBEM/" . $imgfile;
+							$content_image = '<img src="' . $img_src .'" class="' . Options::get( 'user:pbem__class' ) . '">';
+							$body = $content_image . $body;
+						}
+					}
 // Utils::debug( $structure);
-				$postdata = array(
-					'slug' =>$header->subject,
-					'title' => $header->subject,
-					'tags' => $tags,
-					'content' => $body,
-					'user_id' => $user->id,
-					'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
-					'status' => Post::status('published'),
-					'content_type' => Post::type('entry'),
-				);
+					$postdata = array(
+						'slug' =>$header->subject,
+						'title' => $header->subject,
+						'tags' => $tags,
+						'content' => $body,
+						'user_id' => $user->id,
+						'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
+						'status' => Post::status('published'),
+						'content_type' => Post::type('entry'),
+					);
 // Utils::debug( $postdata ); 
 // Utils::debug( $attachments );
-				// This htmlspecialchars makes logs with &lt; &gt; etc. Is there a better way to sanitize?
-				EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
+					// This htmlspecialchars makes logs with &lt; &gt; etc. Is there a better way to sanitize?
+					EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
 
-				$post = Post::create( $postdata );
+					$post = Post::create( $postdata );
 
-				if ($post) {
-					// done with the message, now delete it. Comment out if you're testing.
-					imap_delete( $mh, $i );
+					if ($post) {
+						// done with the message, now delete it. Comment out if you're testing.
+						imap_delete( $mh, $i );
+					}
+					else {
+						EventLog::log( 'Failed to create a new post?' );
+					}
 				}
-				else {
-					EventLog::log( 'Failed to create a new post?' );
-				}
+				imap_expunge( $mh );
+				imap_close( $mh );
 			}
-			imap_expunge( $mh );
-			imap_close( $mh );
 		}
-	}
 
 		return true;
 	}
