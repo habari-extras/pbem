@@ -4,6 +4,7 @@
  * TODO: Make config nicer (server type/name/port/ssl dropdown instead of server string)
  * TODO: allow user to choose content status
  * TODO: Store password with encryption
+ * TODO: Exclude sigs
  */
 class pbem extends Plugin
 {
@@ -14,7 +15,6 @@ class pbem extends Plugin
 
 		// Does pbem directory not exist? * Copied from Habari File Silo
 		$pbemdir = Site::get_dir( 'user' ) . '/files/PBEM';
-// Utils::debug( $pbemdir );
 		if ( !is_dir( $pbemdir ) ) {
 
 			// Create the pbem directory
@@ -23,8 +23,6 @@ class pbem extends Plugin
 			}
 		}
 		$filename = "$pbemdir/$filename";
-// Utils::debug( $content );
-// Utils::debug( $filename );
 		$dest = fopen( $filename, 'w+') or die( 'cannot open for writing') ;
 		fwrite( $dest, $content );
 		return fclose( $dest );
@@ -95,6 +93,7 @@ class pbem extends Plugin
 				for ( $i = 1; $i <= $n; $i++ ) {
 
 					$body = '';
+					$attachments = array();
 
 					$header = imap_header( $mh, $i );
 
@@ -116,7 +115,7 @@ class pbem extends Plugin
 					// get the message structure
 					$structure = imap_fetchstructure( $mh, $i );
 
-					if ( !isset( $structure->parts )) {
+					if ( !isset( $structure->parts ) ) {
 						// message is not not multipart
 						$body = imap_body( $mh, $i ); // fetchbody only works for single part messages.
 						if ( $structure->encoding == 4 ) {
@@ -126,7 +125,6 @@ class pbem extends Plugin
 						}
 					} 
 					else {
-						$attachments = array();
 						if ( isset( $structure->parts ) && count( $structure->parts ) ) {
 
 							for($j = 0; $j < count($structure->parts); $j++) {
@@ -138,7 +136,6 @@ class pbem extends Plugin
 									'name' => '',
 									'attachment' => ''
 								);
-// Utils::debug($structure->parts[$j]->subtype); 		
 
 								if ( $structure->parts[$j]->ifdparameters ) {
 									foreach( $structure->parts[$j]->dparameters as $object ) {
@@ -151,7 +148,6 @@ class pbem extends Plugin
 								}
 								elseif ( strtolower ($structure->parts[$j]->subtype)  == 'plain' ) {
 									$body .= imap_fetchbody( $mh, $i, $j+1 );			
-// Utils::debug( 'PLAIN!!!' );			
 								}
 
 								if ( $structure->parts[$j]->ifparameters ) {
@@ -185,10 +181,10 @@ class pbem extends Plugin
 					$tags = '';
 
 					// if the first line of the message starts with 'tags:', read that line into tags.
-					if ( stripos($body, 'tags:' ) === 0) {
-						list($tags, $body) = explode("\n", $body, 2);
-						$tags = trim(substr($tags, 5));
-						$body = trim($body);
+					if ( stripos( $body, 'tags:' ) === 0 ) {
+						list( $tags, $body ) = explode( "\n", $body, 2 );
+						$tags = trim( substr( $tags, 5 ) );
+						$body = trim( $body );
 					}
 
 					foreach( $attachments as $attachment ) {
@@ -200,7 +196,6 @@ class pbem extends Plugin
 							$body = $content_image . $body;
 						}
 					}
-// Utils::debug( $structure);
 					$postdata = array(
 						'slug' =>$header->subject,
 						'title' => $header->subject,
@@ -209,18 +204,20 @@ class pbem extends Plugin
 						'user_id' => $user->id,
 						'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
 						'status' => Post::status( $user->info->pbem__content_status ),
-						'content_type' => Post::type('entry'),
+						'content_type' => Post::type( 'entry' ),
 					);
-// Utils::debug( $postdata ); 
-// Utils::debug( $attachments );
-					// This htmlspecialchars makes logs with &lt; &gt; etc. Is there a better way to sanitize?
-					EventLog::log( htmlspecialchars( sprintf( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', $header->fromaddress, $header->date, $header->subject, $header->Size ) ) );
 
+					$headerdate = new DateTime( $header->date ); // now in explicit format
+					$headerdate = $headerdate->format( _t( 'Y-m-d H:i:s' ) );
+
+					EventLog::log( _t( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', 
+						array(  Inputfilter::filter( $header->from[0]->mailbox . '@' . $header->from[0]->host ), $headerdate, 
+							Inputfilter::filter( $header->subject ), $header->Size ) ) );
 					$post = Post::create( $postdata );
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
- 						imap_delete( $mh, $i );
+						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
@@ -229,7 +226,7 @@ class pbem extends Plugin
 				imap_expunge( $mh );
 				imap_close( $mh );
 				if ( $messages_skipped > 0 ) {
-					EventLog::log( sprintf( _t( 'Skipped %d messages from senders not on the whitelist.'), $messages_skipped ) );
+					EventLog::log( _t( 'Skipped %d messages from senders not on the whitelist.', array( $messages_skipped ) ) );
 				}
 			}
 		}
@@ -246,8 +243,6 @@ class pbem extends Plugin
 				// should be able to retrieve the emails
 				$actions[]= _t( 'Execute Now' );
 			}
-
-
 		}
 		return $actions;
 	}
