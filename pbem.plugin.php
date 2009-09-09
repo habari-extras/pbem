@@ -1,9 +1,9 @@
 <?php
-
 /*
  * TODO: Make increment configurable
  * TODO: Make config nicer (server type/name/port/ssl dropdown instead of server string)
  * TODO: allow user to choose content status
+ * TODO: Store password with encryption
  */
 class pbem extends Plugin
 {
@@ -40,10 +40,22 @@ class pbem extends Plugin
 				'description' => 'Check for new PBEM mail every 600 seconds.',
 			) );
  			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
+				$user = User::identify();
 
-			if ( !Options::get( 'user:pbem__class' ) ) {
-				Options::set( 'user:pbem__class', 'mobile' );
-			}
+ 			if ( empty( $user->info->pbem__class ) ) {
+				$user->info->pbem__class = 'mobile';
+				$user->info->commit();
+ 			}
+
+ 			if ( empty( $user->info->pbem__whitelist ) ) {
+				$user->info->pbem__whitelist = $user->email;
+				$user->info->commit();
+ 			}
+
+ 			if ( empty( $user->info->pbem__content_status ) ) {
+				$user->info->pbem__content_status = 'published'; // does this need to be localized?
+				$user->info->commit();
+ 			}
 		}
 	}
 
@@ -76,11 +88,32 @@ class pbem extends Plugin
 				$mh = imap_open( $server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG )
 					or Eventlog::log( _t( 'Unable to connect' ) ); // get a better error, one with imap_*
 				$n = imap_num_msg( $mh );
+
+				$whitelist = explode( "\n", $user->info->pbem__whitelist );
+				$messages_skipped = 0;
+
 				for ( $i = 1; $i <= $n; $i++ ) {
 
 					$body = '';
 
 					$header = imap_header( $mh, $i );
+
+					$whitelist_passed = false;
+					foreach ( $whitelist as $item ) {
+						$item = trim( strtolower( $item ) );
+						if ( '' == $item ) { continue; } // blanks in whitelist
+						if ( false != strpos( strtolower( $header->fromaddress ), $item ) ) { 
+							$whitelist_passed = true; 
+							break;
+						}
+					}
+					if ( $whitelist_passed == false ) { 
+						++$messages_skipped;
+						// Move onto the next message.
+						continue; 
+					}
+
+					// get the message structure
 					$structure = imap_fetchstructure( $mh, $i );
 
 					if ( !isset( $structure->parts )) {
@@ -91,7 +124,6 @@ class pbem extends Plugin
 
 							// there's room here for more stuff, with strtoupper($structure->subtype...)
 						}
-// Utils::debug( 'not multipart!' );
 					} 
 					else {
 						$attachments = array();
@@ -164,7 +196,7 @@ class pbem extends Plugin
 							$imgfile = $attachment['filename'];
 							// Put the image at the beginning of the post
 							$img_src = Site::get_url( 'user' ) . "/files/PBEM/" . $imgfile;
-							$content_image = '<img src="' . $img_src .'" class="' . Options::get( 'user:pbem__class' ) . '">';
+							$content_image = '<img src="' . $img_src .'" class="' . $user->info->pbem__class . '">';
 							$body = $content_image . $body;
 						}
 					}
@@ -176,7 +208,7 @@ class pbem extends Plugin
 						'content' => $body,
 						'user_id' => $user->id,
 						'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
-						'status' => Post::status('published'),
+						'status' => Post::status( $user->info->pbem__content_status ),
 						'content_type' => Post::type('entry'),
 					);
 // Utils::debug( $postdata ); 
@@ -188,7 +220,7 @@ class pbem extends Plugin
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
-						imap_delete( $mh, $i );
+ 						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
@@ -196,6 +228,9 @@ class pbem extends Plugin
 				}
 				imap_expunge( $mh );
 				imap_close( $mh );
+				if ( $messages_skipped > 0 ) {
+					EventLog::log( sprintf( _t( 'Skipped %d messages from senders not on the whitelist.'), $messages_skipped ) );
+				}
 			}
 		}
 
@@ -232,9 +267,16 @@ class pbem extends Plugin
 
 					$server_password = $ui->append( 'password', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
 					$server_password->add_validator( 'validate_required' );
+
+					$whitelist = $ui->append( 'textarea', 'whitelist', 'user:pbem__whitelist', _t( 'Senders to accept (messages sent by any others will be discarded):' ) );
+					$whitelist->rows = 2;
+					$whitelist->class[] = 'resizable';
+
 					$ui->append( 'static', 'divider', '<hr>');
 
-					$ui->append( 'text', 'class', 'user:pbem__class', _t( 'CSS Class for attached images', 'pbem' ) );
+					$ui->append( 'text', 'class', 'user:pbem__class', _t( 'CSS Class for attached images:', 'pbem' ) );
+					$ui->append( 'select', 'content_status', 'user:pbem__content_status', _t( 'Save posts as:', 'pbem' ) );
+					$ui->content_status->options = array( 'published' => 'published', 'draft' => 'draft' );
 
 					$ui->append( 'submit', 'save', _t( 'Save', 'pbem' ) );
 					$ui->set_option( 'success_message', _t( 'Configuration saved', 'pbem' ) );
@@ -276,7 +318,7 @@ class pbem extends Plugin
 		if ( !$this->check_files() ) {
 			Session::error( _t( "The web server does not have permission to create the 'files' directory for saving attachments (THis directory is also used for the Habari Media Silo." ) );
 			Plugins::deactivate_plugin( __FILE__ ); //Deactivate plugin
-			Utils::redirect(); //Refresh page. Unfortunately, if not done so then results don't appear
+			Utils::redirect(); // Refresh page. Unfortunately, if not done so then results don't appear
 		}
 	}
 
