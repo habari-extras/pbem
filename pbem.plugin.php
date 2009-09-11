@@ -225,7 +225,7 @@ class pbem extends Plugin
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
-//						imap_delete( $mh, $i );
+						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
