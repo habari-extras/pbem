@@ -22,10 +22,16 @@ class pbem extends Plugin
 				return false;
 			}
 		}
-		$filename = "$pbemdir/$filename";
-		$dest = fopen( $filename, 'w+') or die( 'cannot open for writing') ;
+		$tempfilename = "$pbemdir/temporary" . date('U');
+		$dest = fopen( $tempfilename, 'w+') or die( 'cannot open for writing') ;
 		fwrite( $dest, $content );
-		return fclose( $dest );
+		fclose( $dest );
+
+		$pi = pathinfo( $filename );
+
+		$filename = "$pbemdir/" . $pi['filename'] . md5_file( $tempfilename ) . '.' . $pi['extension'];
+		rename( $tempfilename, $filename );
+		return $filename;
 	}
 
 	public function action_plugin_activation( $file )
@@ -134,7 +140,8 @@ class pbem extends Plugin
 									'filename' => '',
 									'subtype' => '',
 									'name' => '',
-									'attachment' => ''
+									'attachment' => '',
+									'filepath' => '',
 								);
 
 								if ( $structure->parts[$j]->ifdparameters ) {
@@ -167,7 +174,8 @@ class pbem extends Plugin
 
 									if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
 										$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-										self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+										$thisfilename = self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+										$attachments[$j]['filepath'] = $thisfilename;
 									}
 									elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
 										$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
@@ -188,10 +196,10 @@ class pbem extends Plugin
 					}
 
 					foreach( $attachments as $attachment ) {
-						if ( !empty( $attachment[ 'filename' ] ) ) {
-							$imgfile = $attachment['filename'];
+						if ( !empty( $attachment[ 'filepath' ] ) ) {
+							$imgfile = $attachment[ 'filepath' ];
 							// Put the image at the beginning of the post
-							$img_src = Site::get_url( 'user' ) . "/files/PBEM/" . $imgfile;
+							$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $imgfile);
 							$content_image = '<img src="' . $img_src .'" class="' . $user->info->pbem__class . '">';
 							$body = $content_image . $body;
 						}
@@ -217,7 +225,7 @@ class pbem extends Plugin
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
-						imap_delete( $mh, $i );
+//						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
