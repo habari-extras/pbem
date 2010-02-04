@@ -225,7 +225,7 @@ class pbem extends Plugin
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
-						imap_delete( $mh, $i );
+// 						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
@@ -245,7 +245,7 @@ class pbem extends Plugin
 	public function filter_plugin_config( $actions, $plugin_id )
 	{
 		if ( $plugin_id == $this->plugin_id() ) {
-			$actions[] = _t('Configure', 'pbem');
+			$actions['configure'] = _t('Configure', 'pbem');
 			if ( User::identify()->can( 'PBEM' ) ) {
 				// only users with the proper permission
 				// should be able to retrieve the emails
@@ -259,7 +259,7 @@ class pbem extends Plugin
 	{
 		if ( $plugin_id == $this->plugin_id() ) {
 			switch ( $action ) {
-				case _t('Configure', 'pbem') :
+				case 'configure':
 					$ui = new FormUI( 'pbem' );
 
 					$server_string = $ui->append( 'text', 'server_string', 'user:pbem__server_string', _t('Mailbox (<a href="http://php.net/imap_open">imap_open</a> format): ', 'pbem') );
