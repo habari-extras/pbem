@@ -4,6 +4,7 @@
  * TODO: Make config nicer (server type/name/port/ssl dropdown instead of server string)
  * TODO: allow user to choose content status
  * TODO: Store password with encryption
+ * TODO: Optional pass phrase required for post to be published
  * TODO: Exclude sigs
  */
 class pbem extends Plugin
@@ -225,7 +226,7 @@ class pbem extends Plugin
 
 					if ($post) {
 						// done with the message, now delete it. Comment out if you're testing.
-// 						imap_delete( $mh, $i );
+						imap_delete( $mh, $i );
 					}
 					else {
 						EventLog::log( 'Failed to create a new post?' );
