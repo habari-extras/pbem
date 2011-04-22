@@ -79,6 +79,7 @@ class pbem extends Plugin
 				'whitelist' => $user->info->pbem_whitelist,
 				'class'    => $user->info->pbem_class,
 				'status' => $user->info->pbem_status,
+				'user' => $user,
 				);
 		}
 
