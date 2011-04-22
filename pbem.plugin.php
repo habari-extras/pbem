@@ -45,22 +45,6 @@ class pbem extends Plugin
 				'description' => 'Check for new PBEM mail every 600 seconds.',
 			) );
  			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
-				$user = User::identify();
-
- 			if ( empty( $user->info->pbem__class ) ) {
-				$user->info->pbem__class = 'mobile';
-				$user->info->commit();
- 			}
-
- 			if ( empty( $user->info->pbem__whitelist ) ) {
-				$user->info->pbem__whitelist = $user->email;
-				$user->info->commit();
- 			}
-
- 			if ( empty( $user->info->pbem__content_status ) ) {
-				$user->info->pbem__content_status = 'published'; // does this need to be localized?
-				$user->info->commit();
- 			}
 		}
 	}
 
@@ -82,171 +66,199 @@ class pbem extends Plugin
 
 	public static function check_accounts() 
 	{
-		$users = Users::get();
+		$accounts = array();
+		foreach ( Users::get() as $user ) {
+			if ( ! $user->info->pbem_active ) continue;
+			$accounts[$user->name] = array(
+				'server' => $user->info->pbem_server,
+				'protocol' => $user->info->pbem_protocol,
+				'security' => $user->info->pbem_security,
+				'mailbox'  => $user->info->pbem_mailbox,
+				'username' => $user->info->pbem_username,
+				'password' => $user->info->pbem_password,
+				'whitelist' => $user->info->pbem_whitelist,
+				'class'    => $user->info->pbem_class,
+				'status' => $user->info->pbem_status,
+				);
+		}
 
-		foreach ($users as $user) {
-			$server_string = $user->info->pbem__server_string;
-			$server_username = $user->info->pbem__server_username;
-			$server_password = $user->info->pbem__server_password;
+		foreach ($accounts as $user => $account) {
+			extract( $account );
+			// build the $server_string used by imap_open()
+			$server_string = '{' . $server;
+			switch ( "$protocol+$security" ) {
+				case 'imap+none':
+					$server_string .= ':143/imap}';
+					break;
+				case 'imap+ssl':
+					$server_string .= ':993/imap/ssl}';
+					break;
+				case 'imap+tls':
+					$server_string .= ':143/imap/tls}';
+					break;
+				case 'pop3+none':
+					$server_string .= ':110/pop3}';
+					break;
+				case 'pop3+ssl':
+					$server_string .= ':995/pop3/ssl}';
+					break;
+				case 'pop3+tls':
+					$server_string .= ':110/pop3/tls}';
+			}
+			$server_string .= $mailbox;
+			$mh = imap_open( $server_string, $username, $password, OP_SILENT | OP_DEBUG )
+				or Eventlog::log( _t( 'Unable to connect' ) ); // get a better error, one with imap_*
+			$n = imap_num_msg( $mh );
 
-			if ($server_string) {
-				$mh = imap_open( $server_string, $server_username, $server_password, OP_SILENT | OP_DEBUG )
-					or Eventlog::log( _t( 'Unable to connect' ) ); // get a better error, one with imap_*
-				$n = imap_num_msg( $mh );
+			$whitelist = explode( "\n", $whitelist );
+			$messages_skipped = 0;
 
-				$whitelist = explode( "\n", $user->info->pbem__whitelist );
-				$messages_skipped = 0;
+			for ( $i = 1; $i <= $n; $i++ ) {
 
-				for ( $i = 1; $i <= $n; $i++ ) {
+				$body = '';
+				$attachments = array();
 
-					$body = '';
-					$attachments = array();
+				$header = imap_header( $mh, $i );
 
-					$header = imap_header( $mh, $i );
-
-					$whitelist_passed = false;
-					foreach ( $whitelist as $item ) {
-						$item = trim( strtolower( $item ) );
-						if ( '' == $item ) { continue; } // blanks in whitelist
-						if ( false != strpos( strtolower( $header->fromaddress ), $item ) ) { 
-							$whitelist_passed = true; 
-							break;
-						}
+				$whitelist_passed = false;
+				foreach ( $whitelist as $item ) {
+					$item = trim( strtolower( $item ) );
+					if ( '' == $item ) { continue; } // blanks in whitelist
+					if ( false != strpos( strtolower( $header->fromaddress ), $item ) ) { 
+						$whitelist_passed = true; 
+						break;
 					}
-					if ( $whitelist_passed == false ) { 
-						++$messages_skipped;
-						// Move onto the next message.
-						continue; 
+				}
+				if ( $whitelist_passed == false ) { 
+					++$messages_skipped;
+					// Move onto the next message.
+					continue; 
+				}
+
+				// get the message structure
+				$structure = imap_fetchstructure( $mh, $i );
+
+				if ( !isset( $structure->parts ) ) {
+					// message is not not multipart
+					$body = imap_body( $mh, $i ); // fetchbody only works for single part messages.
+					if ( $structure->encoding == 4 ) {
+						$body = quoted_printable_decode( $body );
+
+						// there's room here for more stuff, with strtoupper($structure->subtype...)
 					}
+				} 
+				else {
+					if ( isset( $structure->parts ) && count( $structure->parts ) ) {
 
-					// get the message structure
-					$structure = imap_fetchstructure( $mh, $i );
+						for($j = 0; $j < count($structure->parts); $j++) {
 
-					if ( !isset( $structure->parts ) ) {
-						// message is not not multipart
-						$body = imap_body( $mh, $i ); // fetchbody only works for single part messages.
-						if ( $structure->encoding == 4 ) {
-							$body = quoted_printable_decode( $body );
+							$attachments[$j] = array(
+								'is_attachment' => false,
+								'filename' => '',
+								'subtype' => '',
+								'name' => '',
+								'attachment' => '',
+								'filepath' => '',
+							);
 
-							// there's room here for more stuff, with strtoupper($structure->subtype...)
-						}
-					} 
-					else {
-						if ( isset( $structure->parts ) && count( $structure->parts ) ) {
-
-							for($j = 0; $j < count($structure->parts); $j++) {
-
-								$attachments[$j] = array(
-									'is_attachment' => false,
-									'filename' => '',
-									'subtype' => '',
-									'name' => '',
-									'attachment' => '',
-									'filepath' => '',
-								);
-
-								if ( $structure->parts[$j]->ifdparameters ) {
-									foreach( $structure->parts[$j]->dparameters as $object ) {
-										if ( strtolower( $object->attribute ) == 'filename' ) {
-											$attachments[$j]['is_attachment'] = true;
-											$attachments[$j]['filename'] = $object->value;
-											$attachments[$j]['subtype'] = $structure->parts[$j]->subtype;
-										}
+							if ( $structure->parts[$j]->ifdparameters ) {
+								foreach( $structure->parts[$j]->dparameters as $object ) {
+									if ( strtolower( $object->attribute ) == 'filename' ) {
+										$attachments[$j]['is_attachment'] = true;
+										$attachments[$j]['filename'] = $object->value;
+										$attachments[$j]['subtype'] = $structure->parts[$j]->subtype;
 									}
 								}
-								elseif ( strtolower ($structure->parts[$j]->subtype)  == 'plain' ) {
-									$body .= imap_fetchbody( $mh, $i, $j+1 );			
-								}
+							}
+							elseif ( strtolower ($structure->parts[$j]->subtype)  == 'plain' ) {
+								$body .= imap_fetchbody( $mh, $i, $j+1 );			
+							}
 
-								if ( $structure->parts[$j]->ifparameters ) {
-									foreach( $structure->parts[$j]->parameters as $object ) {
-										if( strtolower( $object->attribute ) == 'name') {
-											$attachments[$j]['is_attachment'] = true;
-											$attachments[$j]['name'] = $object->value;
-											if ( !isset( $attachments[$j]['subtype'] ) ) { // may not be necessary
-												$attachments[$j]['subtype'] = $structure->parts[$j]->subtype; // may not be necessary
-											} // may not be necessary
-										}
+							if ( $structure->parts[$j]->ifparameters ) {
+								foreach( $structure->parts[$j]->parameters as $object ) {
+									if( strtolower( $object->attribute ) == 'name') {
+										$attachments[$j]['is_attachment'] = true;
+										$attachments[$j]['name'] = $object->value;
+										if ( !isset( $attachments[$j]['subtype'] ) ) { // may not be necessary
+											$attachments[$j]['subtype'] = $structure->parts[$j]->subtype; // may not be necessary
+										} // may not be necessary
 									}
 								}
+							}
 
-								if( $attachments[$j]['is_attachment'] ) {
-									$attachments[$j]['attachment'] = imap_fetchbody($mh, $i, $j+1);
+							if( $attachments[$j]['is_attachment'] ) {
+								$attachments[$j]['attachment'] = imap_fetchbody($mh, $i, $j+1);
 
-									if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
-										$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-										$thisfilename = self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
-										$attachments[$j]['filepath'] = $thisfilename;
-									}
-									elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
-										$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
-										$body .= $attachments[$j]['attachment'];
-									}
+								if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
+									$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
+									$thisfilename = self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+									$attachments[$j]['filepath'] = $thisfilename;
+								}
+								elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
+									$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
+									$body .= $attachments[$j]['attachment'];
 								}
 							}
 						}
 					}
+				}
 
-					$tags = '';
+				$tags = '';
 
-					// if the first line of the message starts with 'tags:', read that line into tags.
-					if ( stripos( $body, 'tags:' ) === 0 ) {
-						list( $tags, $body ) = explode( "\n", $body, 2 );
-						$tags = trim( substr( $tags, 5 ) );
-						$body = trim( $body );
-					}
+				// if the first line of the message starts with 'tags:', read that line into tags.
+				if ( stripos( $body, 'tags:' ) === 0 ) {
+					list( $tags, $body ) = explode( "\n", $body, 2 );
+					$tags = trim( substr( $tags, 5 ) );
+					$body = trim( $body );
+				}
 
-					foreach( $attachments as $attachment ) {
-						if ( !empty( $attachment[ 'filepath' ] ) ) {
-							$imgfile = $attachment[ 'filepath' ];
-							// Put the image at the beginning of the post
-							$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $imgfile);
-							$content_image = '<img src="' . $img_src .'" class="' . $user->info->pbem__class . '">';
-							$body = $content_image . $body;
-						}
-					}
-					$postdata = array(
-						'slug' =>$header->subject,
-						'title' => $header->subject,
-						'tags' => $tags,
-						'content' => $body,
-						'user_id' => $user->id,
-						'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
-						'status' => Post::status( $user->info->pbem__content_status ),
-						'content_type' => Post::type( 'entry' ),
-					);
-
-					$headerdate = new DateTime( $header->date ); // now in explicit format
-					$headerdate = $headerdate->format( _t( 'Y-m-d H:i:s' ) );
-
-					EventLog::log( _t( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', 
-						array(  Inputfilter::filter( $header->from[0]->mailbox . '@' . $header->from[0]->host ), $headerdate, 
-							Inputfilter::filter( $header->subject ), $header->Size ) ) );
-					$post = Post::create( $postdata );
-
-					if ($post) {
-						// done with the message, now delete it. Comment out if you're testing.
-						imap_delete( $mh, $i );
-					}
-					else {
-						EventLog::log( 'Failed to create a new post?' );
+				foreach( $attachments as $attachment ) {
+					if ( !empty( $attachment[ 'filepath' ] ) ) {
+						$imgfile = $attachment[ 'filepath' ];
+						// Put the image at the beginning of the post
+						$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $imgfile);
+						$content_image = '<img src="' . $img_src .'" class="' . $class . '">';
+					$body = $content_image . $body;
 					}
 				}
-				imap_expunge( $mh );
-				imap_close( $mh );
-				if ( $messages_skipped > 0 ) {
-					EventLog::log( _t( 'Skipped %d messages from senders not on the whitelist.', array( $messages_skipped ) ) );
+				$postdata = array(
+					'slug' =>$header->subject,
+					'title' => $header->subject,
+					'tags' => $tags,
+					'content' => $body,
+					'user_id' => $user->id,
+					'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
+					'status' => Post::status( $status ),
+					'content_type' => Post::type( 'entry' ),
+				);
+
+				$headerdate = new DateTime( $header->date ); // now in explicit format
+				$headerdate = $headerdate->format( _t( 'Y-m-d H:i:s' ) );
+
+				EventLog::log( _t( 'Mail from %1$s (%2$s): "%3$s" (%4$d bytes)', 
+					array(  Inputfilter::filter( $header->from[0]->mailbox . '@' . $header->from[0]->host ), $headerdate, 
+						Inputfilter::filter( $header->subject ), $header->Size ) ) );
+				$post = Post::create( $postdata );
+
+				if ($post) {
+					// done with the message, now delete it. Comment out if you're testing.
+					imap_delete( $mh, $i );
+				}
+				else {
+					EventLog::log( 'Failed to create a new post?' );
 				}
 			}
+			imap_expunge( $mh );
+			imap_close( $mh );
+			if ( $messages_skipped > 0 ) {
+				EventLog::log( _t( 'Skipped %d messages from senders not on the whitelist.', array( $messages_skipped ) ) );
+			}
 		}
-
-		return true;
 	}
 
 	public function filter_plugin_config( $actions, $plugin_id )
 	{
 		if ( $plugin_id == $this->plugin_id() ) {
-			$actions['configure'] = _t('Configure', 'pbem');
 			if ( User::identify()->can( 'PBEM' ) ) {
 				// only users with the proper permission
 				// should be able to retrieve the emails
@@ -256,36 +268,94 @@ class pbem extends Plugin
 		return $actions;
 	}
 
+	public function action_form_user( $form, $edit_user )
+	{
+		$pbem = $form->insert('page_controls', 'wrapper','pbem', _t('Post By Email', 'pbem'));
+		$pbem->class = 'container settings';
+		$pbem->append( 'static', 'pbem', '<h2>' . htmlentities( _t( 'Post By Email', 'pbem' ), ENT_COMPAT, 'UTF-8' ) . '</h2>' );
+
+		// allow users to turn off PBEM without destroying config
+		$pbem_active = $form->pbem->append( 'select', 'pbem_active', 'null:null', _t('Enable post by email: ', 'pbem') );
+		$pbem_active->class[] = 'item clear';
+		$pbem_active->options = array( 1 => 'Yes', 0 => 'No' );
+		$pbem_active->template = 'optionscontrol_select';
+		$pbem_active->value = $edit_user->info->pbem_active;
+
+		$pbem_server = $form->pbem->append( 'text', 'pbem_server', 'null:null', _t('Fully qualified domain name of server: ', 'pbem'), 'optionscontrol_text' );
+		$pbem_server->class[] = 'item clear';
+		$pbem_server->charlimit = 50;
+		$pbem_server->value = $edit_user->info->pbem_server;
+
+		$pbem_mailbox = $form->pbem->append( 'text', 'pbem_mailbox', 'null:null', _t( 'Mailbox name: ', 'pbem' ), 'optionscontrol_text' );
+		$pbem_mailbox->class[] = 'item clear';
+		$pbem_mailbox->value = $edit_user->info->pbem_mailbox;
+		$pbem_mailbox->charlimit = 50;
+
+		$pbem_protocol = $form->pbem->append( 'select', 'pbem_protocol', 'null:null', _t('Protocol: ', 'pbem') );
+		$pbem_protocol->class[] = 'item clear';
+		$pbem_protocol->options = array( 'imap' => 'IMAP', 'pop3' => 'POP3' );
+		$pbem_protocol->template = 'optionscontrol_select';
+		$pbem_protocol->value = $edit_user->info->pbem_protocol;
+
+		$pbem_security = $form->pbem->append( 'select', 'pbem_security', 'null:null', _t('Security: ', 'pbem') );
+		$pbem_security->class[] = 'item clear';
+		$pbem_security->options = array( 'none' => 'None', 'ssl' => 'SSL', 'tls' => 'TLS' );
+		$pbem_security->template = 'optionscontrol_select';
+		$pbem_security->value = $edit_user->info->pbem_security;
+
+
+		$pbem_username = $form->pbem->append( 'text', 'pbem_username', 'null:null', _t('Username: ', 'pbem'), 'optionscontrol_text' );
+		$pbem->pbem_username->add_validator( 'validate_required' );
+		$pbem_username->value = $edit_user->info->pbem_username;
+		$pbem_username->charlimit = 50;
+		$pbem_username->class[] = 'item clear';
+
+		$pbem_password = $form->pbem->append( 'text', 'pbem_password', 'null:null', _t('Password: ', 'pbem'), 'optionscontrol_text' );
+		$pbem->pbem_password->add_validator( 'validate_required' );
+		$pbem_password->value = $edit_user->info->pbem_password;
+		$pbem_password->charlimit = 50;
+		$pbem_password->class[] = 'item clear';
+
+		$pbem_whitelist = $form->pbem->append( 'textarea', 'pbem_whitelist', 'null:null', _t( 'Senders to accept (messages sent by any others will be discarded):' ) );
+		$pbem_whitelist->rows = 2;
+		$pbem_whitelist->class[] = 'resizable';
+		$pbem_whitelist->value = $edit_user->info->pbem_whitelist;
+		$pbem_whitelist->class[] = 'item clear';
+
+		$pbem_class = $form->pbem->append( 'text', 'pbem_class', 'null:null', _t( 'CSS Class for attached images:', 'pbem' ), 'optionscontrol_text' );
+		$pbem_class->class[] = 'item clear';
+		$pbem_class->value = $edit_user->info->pbem_class;
+		$pbem_class->charlimit = 50;
+
+		$pbem_status = $form->pbem->append( 'select', 'pbem_status', 'null:null', _t( 'Save posts as:', 'pbem' ) );
+		$pbem_status->options = array( 'published' => 'published', 'draft' => 'draft' );
+		$pbem_status->template = 'optionscontrol_select';
+		$pbem_status->value = $edit_user->info->pbem_status;
+		$pbem_status->class[] = 'item clear';
+	}
+
+	/**
+	 * add the PBEM user options to the list of valid field names
+	**/
+	public function filter_adminhandler_post_user_fields( $fields )
+	{
+		$fields['pbem_active'] = 'pbem_active';
+		$fields['pbem_server'] = 'pbem_server';
+		$fields['pbem_protocol'] = 'pbem_protocol';
+		$fields['pbem_security'] = 'pbem_security';
+		$fields['pbem_mailbox'] = 'pbem_mailbox';
+		$fields['pbem_username'] = 'pbem_username';
+		$fields['pbem_password'] = 'pbem_password';
+		$fields['pbem_whitelist'] = 'pbem_whitelist';
+		$fields['pbem_class'] = 'pbem_class';
+		$fields['pbem_status'] = 'pbem_status';
+		return $fields;
+	}
+			
 	public function action_plugin_ui( $plugin_id, $action )
 	{
 		if ( $plugin_id == $this->plugin_id() ) {
 			switch ( $action ) {
-				case 'configure':
-					$ui = new FormUI( 'pbem' );
-
-					$server_string = $ui->append( 'text', 'server_string', 'user:pbem__server_string', _t('Mailbox (<a href="http://php.net/imap_open">imap_open</a> format): ', 'pbem') );
-					$server_string->add_validator( 'validate_required' );
-
-					$server_username = $ui->append( 'text', 'server_username', 'user:pbem__server_username', _t('Username: ', 'pbem') );
-					$server_username->add_validator( 'validate_required' );
-
-					$server_password = $ui->append( 'password', 'server_password', 'user:pbem__server_password', _t('Password: ', 'pbem') );
-					$server_password->add_validator( 'validate_required' );
-
-					$whitelist = $ui->append( 'textarea', 'whitelist', 'user:pbem__whitelist', _t( 'Senders to accept (messages sent by any others will be discarded):' ) );
-					$whitelist->rows = 2;
-					$whitelist->class[] = 'resizable';
-
-					$ui->append( 'static', 'divider', '<hr>');
-
-					$ui->append( 'text', 'class', 'user:pbem__class', _t( 'CSS Class for attached images:', 'pbem' ) );
-					$ui->append( 'select', 'content_status', 'user:pbem__content_status', _t( 'Save posts as:', 'pbem' ) );
-					$ui->content_status->options = array( 'published' => 'published', 'draft' => 'draft' );
-
-					$ui->append( 'submit', 'save', _t( 'Save', 'pbem' ) );
-					$ui->set_option( 'success_message', _t( 'Configuration saved', 'pbem' ) );
-					$ui->out();
-					break;
 				case _t('Execute Now','pbem') :
 					$this->check_accounts();
 					Utils::redirect( URL::get( 'admin', 'page=plugins' ) );
@@ -318,13 +388,27 @@ class pbem extends Plugin
 		$user_path = HABARI_PATH . '/' . Site::get_path('user', true);
 		$this->root = $user_path . 'files'; //Options::get('simple_file_root');
 		$this->url = Site::get_url('user', true) . 'files';  //Options::get('simple_file_url');
-
-		if ( !$this->check_files() ) {
-			Session::error( _t( "The web server does not have permission to create the 'files' directory for saving attachments (THis directory is also used for the Habari Media Silo." ) );
-			Plugins::deactivate_plugin( __FILE__ ); //Deactivate plugin
-			Utils::redirect(); // Refresh page. Unfortunately, if not done so then results don't appear
-		}
 	}
+
+	/**
+ 	 * Ensure the environment supports this plugin before permitting it
+	 * to be activated
+	**/
+	public function filter_activate_plugin( $ok, $file )
+	{
+		if ( Plugins::id_from_file($file) == Plugins::id_from_file(__FILE__) ) {
+			if ( !$this->check_files() ) {
+				Session::error( _t( "The web server does not have permission to create the 'files' directory for saving attachments. (This directory is also used for the Habari Media Silo.)" ) );
+				EventLog::log( _t( "The web server does not have permission to create the 'files' directory for saving attachments. (This directory is also used for the Habari Media Silo.)" ), 'warning', 'plugin' );
+				return false;
+			}
+		}
+		return $ok;
+	}
+
+/*
+DONT DO LOCAL MEDIA HANDLING. USE HABARI MEDIA OBJECTS TO INTERACT WITH SILOS
+*/
 
 	/**
 	 * Checks if files directory is usable
