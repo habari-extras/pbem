@@ -9,10 +9,32 @@
  */
 class pbem extends Plugin
 {
+	public static function store( $filename, $content )
+	{
+		// we need a filename and some content
+		if ( ( ! $filename ) || ( ! $content ) ) {
+			return false;
+		}
+		// this directory should already exist; but let's be safe
+		$dir = Site::get_dir( 'user' ) . '/files/PBEM';
+		if ( ! is_dir( $dir ) ) {
+			if ( ! mkdir( $dir, 0755 ) ) {
+				return false;
+			}
+		}
+		$fh = fopen( "$dir/$filename", 'w+b');
+		if ( FALSE === $fh ) {
+			return false;
+		}
+		fwrite( $fh, $content );
+		fclose( $fh );
+		return "$dir/$filename";
+	}
+
 	/**
 	 * Save attached JPG, PNG, and GIF files to user/files/pbem
 	 **/
-	public static function store_attachment( $filename = null, $content = null ) {
+	public function filter_pbem_store_local( $url, $filename = null, $content = null, $user = null ) {
 
 		// Does pbem directory not exist? * Copied from Habari File Silo
 		$pbemdir = Site::get_dir( 'user' ) . '/files/PBEM';
@@ -32,7 +54,11 @@ class pbem extends Plugin
 
 		$filename = "$pbemdir/" . $pi['filename'] . md5_file( $tempfilename ) . '.' . $pi['extension'];
 		rename( $tempfilename, $filename );
-		return $filename;
+
+		// now build up the img tag to return
+		$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $filename);
+
+		return $img_src;
 	}
 
 	public function action_plugin_activation( $file )
@@ -45,6 +71,15 @@ class pbem extends Plugin
 				'description' => 'Check for new PBEM mail every 600 seconds.',
 			) );
  			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
+			$dir = Site::get_dir( 'user' ) . '/files/PBEM';
+			if ( ! is_dir( $dir ) ) {
+				if ( ! mkdir( $dir, 0755 ) ) {
+					EventLog::log( 'PBEM temporary storage directory ' . $dir . ' could not be created. Attachment processing will not work.', 'info', 'plugin', 'pbem' );
+					Session::error( 'PBEM temporary storage directory ' . $dir . ' could not be created. Attachment processing will not work.' );
+				} else {
+					EventLog::log( 'PBEM temporary storage directory ' . $dir . ' created.', 'info', 'plugin', 'pbem' );
+				}
+			}
 		}
 	}
 
@@ -118,6 +153,7 @@ class pbem extends Plugin
 
 				$body = '';
 				$attachments = array();
+				$media = array();
 
 				$header = imap_header( $mh, $i );
 
@@ -159,7 +195,6 @@ class pbem extends Plugin
 								'subtype' => '',
 								'name' => '',
 								'attachment' => '',
-								'filepath' => '',
 							);
 
 							if ( $structure->parts[$j]->ifdparameters ) {
@@ -192,8 +227,10 @@ class pbem extends Plugin
 
 								if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
 									$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-									$thisfilename = self::store_attachment( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
-									$attachments[$j]['filepath'] = $thisfilename;
+									$path = self::store( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+									if ( false !== $path ) {
+										$media[ $attachments[$j]['filename'] ] = $path;
+									}
 								}
 								elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
 									$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
@@ -204,23 +241,20 @@ class pbem extends Plugin
 					}
 				}
 
-				$tags = '';
+				$tags = $user->info->pbem_tags;
 
 				// if the first line of the message starts with 'tags:', read that line into tags.
 				if ( stripos( $body, 'tags:' ) === 0 ) {
-					list( $tags, $body ) = explode( "\n", $body, 2 );
-					$tags = trim( substr( $tags, 5 ) );
+					list( $additional_tags, $body ) = explode( "\n", $body, 2 );
+					$tags .= ',' . trim( substr( $additional_tags, 5 ) );
 					$body = trim( $body );
 				}
 
-				foreach( $attachments as $attachment ) {
-					if ( !empty( $attachment[ 'filepath' ] ) ) {
-						$imgfile = $attachment[ 'filepath' ];
-						// Put the image at the beginning of the post
-						$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $imgfile);
-						$content_image = '<img src="' . $img_src .'" class="' . $class . '">';
-					$body = $content_image . $body;
-					}
+				$new_info = '';
+				if ( ! empty( $media ) ) {
+					$storage = $user->info->pbem_storage;
+					// filter the post body
+					$body = Plugins::filter( "pbem_store_$storage", $body, $media, $user, $tags );
 				}
 				$postdata = array(
 					'slug' =>$header->subject,
@@ -228,7 +262,7 @@ class pbem extends Plugin
 					'tags' => $tags,
 					'content' => $body,
 					'user_id' => $user->id,
-					'pubdate' => HabariDateTime::date_create( date( 'Y-m-d H:i:s', $header->udate ) ),
+					'pubdate' => HabariDateTime::date_create(),
 					'status' => Post::status( $status ),
 					'content_type' => Post::type( 'entry' ),
 				);
@@ -240,6 +274,10 @@ class pbem extends Plugin
 					array(  Inputfilter::filter( $header->from[0]->mailbox . '@' . $header->from[0]->host ), $headerdate, 
 						Inputfilter::filter( $header->subject ), $header->Size ) ) );
 				$post = Post::create( $postdata );
+				if ( ! empty( $new_info ) ) {
+					$post->info->$new_info = 1;
+					$post->update();
+				}
 
 				if ($post) {
 					// done with the message, now delete it. Comment out if you're testing.
@@ -323,10 +361,22 @@ class pbem extends Plugin
 		$pbem_whitelist->value = $edit_user->info->pbem_whitelist;
 		$pbem_whitelist->class[] = 'item clear';
 
+		$pbem_storage = $form->pbem->append( 'select', 'pbem_storage', 'null:null', _t('Where to store attachments: ', 'pbem' ) );
+		$pbem_storage->class[] = 'item clear';
+		$storage_options = array( 'local' => 'Local' );
+		$pbem_storage->options = Plugins::filter('pbem_storage_provider', $storage_options );
+		$pbem_storage->template = 'optionscontrol_select';
+		$pbem_storage->value = $edit_user->info->pbem_storage;
+
 		$pbem_class = $form->pbem->append( 'text', 'pbem_class', 'null:null', _t( 'CSS Class for attached images:', 'pbem' ), 'optionscontrol_text' );
 		$pbem_class->class[] = 'item clear';
 		$pbem_class->value = $edit_user->info->pbem_class;
 		$pbem_class->charlimit = 50;
+
+		$pbem_tags = $form->pbem->append( 'text', 'pbem_tags', 'null:null', _t('Tags to automatically apply to PBeM posts: ', 'pbem'), 'optionscontrol_text' );
+		$pbem_tags->class[] = 'item clear';
+		$pbem_tags->value = $edit_user->info->pbem_tags;
+		$pbem_tags->charlimit = 50;
 
 		$pbem_status = $form->pbem->append( 'select', 'pbem_status', 'null:null', _t( 'Save posts as:', 'pbem' ) );
 		$pbem_status->options = array( 'published' => 'published', 'draft' => 'draft' );
@@ -348,7 +398,9 @@ class pbem extends Plugin
 		$fields['pbem_username'] = 'pbem_username';
 		$fields['pbem_password'] = 'pbem_password';
 		$fields['pbem_whitelist'] = 'pbem_whitelist';
+		$fields['pbem_storage'] = 'pbem_storage';
 		$fields['pbem_class'] = 'pbem_class';
+		$fields['pbem_tags'] = 'pbem_tags';
 		$fields['pbem_status'] = 'pbem_status';
 		return $fields;
 	}
