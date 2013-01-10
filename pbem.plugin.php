@@ -245,7 +245,6 @@ class pbem extends Plugin
 					$body = trim( $body );
 				}
 
-				$new_info = '';
 				if ( ! empty( $media ) ) {
 					$storage = $user->info->pbem_storage;
 					// filter the post body
@@ -269,10 +268,6 @@ class pbem extends Plugin
 					array(  Inputfilter::filter( $header->from[0]->mailbox . '@' . $header->from[0]->host ), $headerdate, 
 						Inputfilter::filter( $header->subject ), $header->Size ) ) );
 				$post = Post::create( $postdata );
-				if ( ! empty( $new_info ) ) {
-					$post->info->$new_info = 1;
-					$post->update();
-				}
 
 				if ($post) {
 					// done with the message, now delete it. Comment out if you're testing.
