@@ -9,6 +9,9 @@
  */
 class pbem extends Plugin
 {
+	/**
+	 * store file in /user/files/PBEM and return the full filepath
+	**/
 	public static function store( $filename, $content )
 	{
 		// we need a filename and some content
@@ -32,33 +35,25 @@ class pbem extends Plugin
 	}
 
 	/**
-	 * Save attached JPG, PNG, and GIF files to user/files/pbem
+	 * return a post body with any attached image files inserted at the beginning
 	 **/
-	public function filter_pbem_store_local( $url, $filename = null, $content = null, $user = null ) {
-
-		// Does pbem directory not exist? * Copied from Habari File Silo
-		$pbemdir = Site::get_dir( 'user' ) . '/files/PBEM';
-		if ( !is_dir( $pbemdir ) ) {
-
-			// Create the pbem directory
-			if ( !mkdir( $pbemdir, 0755 ) ) {
-				return false;
+	public function filter_pbem_store_local( $body, $media, $user, $tags ) 
+	{
+		$images = '';
+		foreach ( $media as $filename => $filepath ) {
+			$ext = strtolower( pathinfo( $filepath, PATHINFO_EXTENSION ) );
+			if ( ! in_array( $ext, array( 'jpg', 'jpeg', 'gif', 'png' ) ) ){
+				continue;
 			}
+			$images .= '<img src="';
+			$images .= str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $filepath );
+			$images .= '"';
+			if ( $user->info->pbem_class ) {
+				$images .= ' class="' . $user->info->pbem_class . '"';
+			}
+			$images .= '>';
 		}
-		$tempfilename = "$pbemdir/temporary" . date('U');
-		$dest = fopen( $tempfilename, 'w+') or die( 'cannot open for writing') ;
-		fwrite( $dest, $content );
-		fclose( $dest );
-
-		$pi = pathinfo( $filename );
-
-		$filename = "$pbemdir/" . $pi['filename'] . md5_file( $tempfilename ) . '.' . $pi['extension'];
-		rename( $tempfilename, $filename );
-
-		// now build up the img tag to return
-		$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $filename);
-
-		return $img_src;
+		return $images . $body;
 	}
 
 	public function action_plugin_activation( $file )
@@ -195,10 +190,6 @@ class pbem extends Plugin
 								'subtype' => '',
 								'name' => '',
 								'attachment' => '',
-<<<<<<< HEAD
-=======
-								'url' => '',
->>>>>>> 5b7c43ebad693cb541d2acfe6439421fc3146e31
 							);
 
 							if ( $structure->parts[$j]->ifdparameters ) {
@@ -231,17 +222,10 @@ class pbem extends Plugin
 
 								if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
 									$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-<<<<<<< HEAD
 									$path = self::store( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
 									if ( false !== $path ) {
 										$media[ $attachments[$j]['filename'] ] = $path;
 									}
-=======
-									$url = '';
-									$storage = $user->info->pbem_storage;
-									$url = Plugins::filter("pbem_store_$storage", $url, $attachments[$j]['filename'], $attachments[$j]['attachment'], $user );
-									$attachments[$j]['url'] = $url;
->>>>>>> 5b7c43ebad693cb541d2acfe6439421fc3146e31
 								}
 								elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
 									$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
@@ -261,24 +245,11 @@ class pbem extends Plugin
 					$body = trim( $body );
 				}
 
-<<<<<<< HEAD
 				$new_info = '';
 				if ( ! empty( $media ) ) {
 					$storage = $user->info->pbem_storage;
 					// filter the post body
 					$body = Plugins::filter( "pbem_store_$storage", $body, $media, $user, $tags );
-=======
-				foreach( $attachments as $attachment ) {
-					if ( !empty( $attachment[ 'url' ] ) ) {
-						// Put the image at the beginning of the post
-						$content_image = '<img src="' . $attachment[ 'url' ] .'"';
-						if ( $class ) {
-							$content_image .= ' class="' . $class . '"';
-						}
-						$content_image .= '>';
-						$body = $content_image . $body;
-					}
->>>>>>> 5b7c43ebad693cb541d2acfe6439421fc3146e31
 				}
 				$postdata = array(
 					'slug' =>$header->subject,
