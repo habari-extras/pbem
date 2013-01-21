@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <pluggable type="plugin">
 	<name>PBEM</name>
-	<version>0.2.1</version>
+	<version>0.3.1</version>
 	<url>http://habariproject.org/</url>
 	<author url="http://habariproject.org/">The Habari Community</author>
 	<license url="http://www.apache.org/licenses/LICENSE-2.0.html">Apache Software License 2.0</license>
 	<description><![CDATA[Post by sending e-mail to a special mailbox or IMAP folder.]]></description>
 	<copyright>2009</copyright>
+	<provides>
+		<feature>pbem</feature>
+	</provides>
 </pluggable>
 
  

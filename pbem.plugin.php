@@ -10,33 +10,50 @@
 class pbem extends Plugin
 {
 	/**
-	 * Save attached JPG, PNG, and GIF files to user/files/pbem
-	 **/
-	public function filter_pbem_store_local( $url, $filename = null, $content = null, $user = null ) {
-
-		// Does pbem directory not exist? * Copied from Habari File Silo
-		$pbemdir = Site::get_dir( 'user' ) . '/files/PBEM';
-		if ( !is_dir( $pbemdir ) ) {
-
-			// Create the pbem directory
-			if ( !mkdir( $pbemdir, 0755 ) ) {
+	 * store file in /user/files/PBEM and return the full filepath
+	**/
+	public static function store( $filename, $content )
+	{
+		// we need a filename and some content
+		if ( ( ! $filename ) || ( ! $content ) ) {
+			return false;
+		}
+		// this directory should already exist; but let's be safe
+		$dir = Site::get_dir( 'user' ) . '/files/PBEM';
+		if ( ! is_dir( $dir ) ) {
+			if ( ! mkdir( $dir, 0755 ) ) {
 				return false;
 			}
 		}
-		$tempfilename = "$pbemdir/temporary" . date('U');
-		$dest = fopen( $tempfilename, 'w+') or die( 'cannot open for writing') ;
-		fwrite( $dest, $content );
-		fclose( $dest );
+		$fh = fopen( "$dir/$filename", 'w+b');
+		if ( FALSE === $fh ) {
+			return false;
+		}
+		fwrite( $fh, $content );
+		fclose( $fh );
+		return "$dir/$filename";
+	}
 
-		$pi = pathinfo( $filename );
-
-		$filename = "$pbemdir/" . $pi['filename'] . md5_file( $tempfilename ) . '.' . $pi['extension'];
-		rename( $tempfilename, $filename );
-
-		// now build up the img tag to return
-		$img_src = str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $filename);
-
-		return $img_src;
+	/**
+	 * return a post body with any attached image files inserted at the beginning
+	 **/
+	public function filter_pbem_store_local( $body, $media, $user, $tags ) 
+	{
+		$images = '';
+		foreach ( $media as $filename => $filepath ) {
+			$ext = strtolower( pathinfo( $filepath, PATHINFO_EXTENSION ) );
+			if ( ! in_array( $ext, array( 'jpg', 'jpeg', 'gif', 'png' ) ) ){
+				continue;
+			}
+			$images .= '<img src="';
+			$images .= str_replace( Site::get_dir( 'user' ), Site::get_url( 'user' ), $filepath );
+			$images .= '"';
+			if ( $user->info->pbem_class ) {
+				$images .= ' class="' . $user->info->pbem_class . '"';
+			}
+			$images .= '>';
+		}
+		return $images . $body;
 	}
 
 	public function action_plugin_activation( $file )
@@ -49,6 +66,15 @@ class pbem extends Plugin
 				'description' => 'Check for new PBEM mail every 600 seconds.',
 			) );
  			ACL::create_token( 'PBEM', 'Directly administer posts from the PBEM plugin', 'pbem' ); 
+			$dir = Site::get_dir( 'user' ) . '/files/PBEM';
+			if ( ! is_dir( $dir ) ) {
+				if ( ! mkdir( $dir, 0755 ) ) {
+					EventLog::log( 'PBEM temporary storage directory ' . $dir . ' could not be created. Attachment processing will not work.', 'info', 'plugin', 'pbem' );
+					Session::error( 'PBEM temporary storage directory ' . $dir . ' could not be created. Attachment processing will not work.' );
+				} else {
+					EventLog::log( 'PBEM temporary storage directory ' . $dir . ' created.', 'info', 'plugin', 'pbem' );
+				}
+			}
 		}
 	}
 
@@ -122,6 +148,7 @@ class pbem extends Plugin
 
 				$body = '';
 				$attachments = array();
+				$media = array();
 
 				$header = imap_header( $mh, $i );
 
@@ -163,7 +190,6 @@ class pbem extends Plugin
 								'subtype' => '',
 								'name' => '',
 								'attachment' => '',
-								'url' => '',
 							);
 
 							if ( $structure->parts[$j]->ifdparameters ) {
@@ -196,10 +222,10 @@ class pbem extends Plugin
 
 								if( $structure->parts[$j]->encoding == 3 ) { // 3 = BASE64
 									$attachments[$j]['attachment'] = base64_decode( $attachments[$j]['attachment'] );
-									$url = '';
-									$storage = $user->info->pbem_storage;
-									$url = Plugins::filter("pbem_store_$storage", $url, $attachments[$j]['filename'], $attachments[$j]['attachment'], $user );
-									$attachments[$j]['url'] = $url;
+									$path = self::store( $attachments[$j]['filename'], $attachments[$j]['attachment'] );
+									if ( false !== $path ) {
+										$media[ $attachments[$j]['filename'] ] = $path;
+									}
 								}
 								elseif ( $structure->parts[$j]->encoding == 4) { // 4 = QUOTED-PRINTABLE
 									$attachments[$j]['attachment'] = quoted_printable_decode($attachments[$j]['attachment']);
@@ -219,16 +245,10 @@ class pbem extends Plugin
 					$body = trim( $body );
 				}
 
-				foreach( $attachments as $attachment ) {
-					if ( !empty( $attachment[ 'url' ] ) ) {
-						// Put the image at the beginning of the post
-						$content_image = '<img src="' . $attachment[ 'url' ] .'"';
-						if ( $class ) {
-							$content_image .= ' class="' . $class . '"';
-						}
-						$content_image .= '>';
-						$body = $content_image . $body;
-					}
+				if ( ! empty( $media ) ) {
+					$storage = $user->info->pbem_storage;
+					// filter the post body
+					$body = Plugins::filter( "pbem_store_$storage", $body, $media, $user, $tags );
 				}
 				$postdata = array(
 					'slug' =>$header->subject,
