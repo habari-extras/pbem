@@ -325,7 +325,7 @@ class pbem extends Plugin
 		$pbem_password->charlimit = 50;
 		$pbem_password->class[] = 'item clear';
 
-		$pbem_whitelist = $form->pbem->append( 'textarea', 'pbem_whitelist', 'null:null', _t( 'Senders to accept (messages sent by any others will be discarded):' ) );
+		$pbem_whitelist = $form->pbem->append( 'textarea', 'pbem_whitelist', 'null:null', _t( 'Senders to accept, one per line:' ) );
 		$pbem_whitelist->rows = 2;
 		$pbem_whitelist->class[] = 'resizable';
 		$pbem_whitelist->value = $edit_user->info->pbem_whitelist;
